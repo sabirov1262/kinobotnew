@@ -1,2 +1,0 @@
-python-telegram-bot[webhooks]==22.5
-aiosqlite==0.21.0
