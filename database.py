@@ -4,8 +4,10 @@ import os
 DEFAULT_DB_PATH = "/var/data/kinobot.db" if os.path.isdir("/var/data") else "kinobot.db"
 DB_PATH = os.getenv("DB_PATH", DEFAULT_DB_PATH)
 
+
 async def get_db():
     return await aiosqlite.connect(DB_PATH)
+
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -22,7 +24,7 @@ async def init_db():
                 last_active TEXT DEFAULT (datetime('now'))
             )
         """)
-        
+
         # Adminlar jadvali
         await db.execute("""
             CREATE TABLE IF NOT EXISTS admins (
@@ -33,8 +35,8 @@ async def init_db():
                 added_at TEXT DEFAULT (datetime('now'))
             )
         """)
-        
-        # Kinolar jadvali - asosiy saqlash joyi Telegram baza kanal
+
+        # Kinolar jadvali
         await db.execute("""
             CREATE TABLE IF NOT EXISTS movies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +52,7 @@ async def init_db():
                 is_active INTEGER DEFAULT 1
             )
         """)
-        
+
         # Majburiy obuna kanallar
         await db.execute("""
             CREATE TABLE IF NOT EXISTS channels (
@@ -63,7 +65,7 @@ async def init_db():
                 is_active INTEGER DEFAULT 1
             )
         """)
-        
+
         # Premium tariflar
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tariffs (
@@ -76,7 +78,7 @@ async def init_db():
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
-        
+
         # To'lovlar
         await db.execute("""
             CREATE TABLE IF NOT EXISTS payments (
@@ -90,7 +92,6 @@ async def init_db():
                 confirmed_at TEXT
             )
         """)
-        
 
         # Premium so'rovlar
         await db.execute("""
@@ -114,11 +115,11 @@ async def init_db():
                 value TEXT
             )
         """)
-        
 
         # Schema migratsiyalari
         async with db.execute("PRAGMA table_info(movies)") as cur:
             movie_cols = {row[1] for row in await cur.fetchall()}
+
         if 'source_chat_id' not in movie_cols:
             await db.execute("ALTER TABLE movies ADD COLUMN source_chat_id TEXT")
         if 'source_message_id' not in movie_cols:
@@ -142,8 +143,9 @@ async def init_db():
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, val)
             )
-        
+
         await db.commit()
+
     print("✅ Database tayyor!")
 
 
@@ -156,6 +158,7 @@ async def get_user(user_id: int):
             "SELECT * FROM users WHERE user_id = ?", (user_id,)
         ) as cur:
             return await cur.fetchone()
+
 
 async def add_user(user_id: int, username: str, full_name: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -171,17 +174,20 @@ async def add_user(user_id: int, username: str, full_name: str):
         )
         await db.commit()
 
+
 async def get_user_count():
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
             row = await cur.fetchone()
             return row[0]
 
+
 async def get_all_user_ids():
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT user_id FROM users") as cur:
             rows = await cur.fetchall()
             return [r[0] for r in rows]
+
 
 async def get_premium_user_count():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -191,6 +197,7 @@ async def get_premium_user_count():
             row = await cur.fetchone()
             return row[0]
 
+
 async def get_premium_users():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -198,6 +205,7 @@ async def get_premium_users():
             "SELECT * FROM users WHERE is_premium=1 ORDER BY premium_expire DESC"
         ) as cur:
             return await cur.fetchall()
+
 
 async def set_premium(user_id: int, days: int):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -209,6 +217,7 @@ async def set_premium(user_id: int, days: int):
         )
         await db.commit()
 
+
 async def remove_premium(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -216,6 +225,7 @@ async def remove_premium(user_id: int):
             (user_id,)
         )
         await db.commit()
+
 
 async def is_premium_user(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -239,6 +249,7 @@ async def is_admin(user_id: int):
         ) as cur:
             return await cur.fetchone() is not None
 
+
 async def add_admin(user_id: int, username: str, full_name: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -247,10 +258,12 @@ async def add_admin(user_id: int, username: str, full_name: str):
         )
         await db.commit()
 
+
 async def remove_admin(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
         await db.commit()
+
 
 async def get_admins():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -279,6 +292,7 @@ async def add_movie(
         )
         await db.commit()
 
+
 async def get_movie(code: str):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -286,6 +300,7 @@ async def get_movie(code: str):
             "SELECT * FROM movies WHERE code=? AND is_active=1", (code,)
         ) as cur:
             return await cur.fetchone()
+
 
 async def get_all_movies():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -295,15 +310,18 @@ async def get_all_movies():
         ) as cur:
             return await cur.fetchall()
 
+
 async def delete_movie(code: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE movies SET is_active=0 WHERE code=?", (code,))
         await db.commit()
 
+
 async def increment_views(code: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE movies SET views=views+1 WHERE code=?", (code,))
         await db.commit()
+
 
 async def get_movie_count():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -311,11 +329,13 @@ async def get_movie_count():
             row = await cur.fetchone()
             return row[0]
 
+
 async def get_total_views():
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT SUM(views) FROM movies WHERE is_active=1") as cur:
             row = await cur.fetchone()
             return row[0] or 0
+
 
 async def update_movie(code: str, field: str, value: str):
     allowed = ['title', 'caption']
@@ -337,6 +357,7 @@ async def add_channel(channel_id: str, name: str, link: str, ch_type: str = 'pub
         )
         await db.commit()
 
+
 async def get_channels():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -344,6 +365,7 @@ async def get_channels():
             "SELECT * FROM channels WHERE is_active=1"
         ) as cur:
             return await cur.fetchall()
+
 
 async def delete_channel(channel_id: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -361,17 +383,20 @@ async def add_tariff(name: str, duration: int, price: int, desc: str = ''):
         )
         await db.commit()
 
+
 async def get_tariffs():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM tariffs WHERE is_active=1") as cur:
             return await cur.fetchall()
 
+
 async def get_tariff(tariff_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM tariffs WHERE id=?", (tariff_id,)) as cur:
             return await cur.fetchone()
+
 
 async def update_tariff(tariff_id: int, field: str, value):
     allowed = ['name', 'duration_days', 'price', 'is_active']
@@ -380,6 +405,7 @@ async def update_tariff(tariff_id: int, field: str, value):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(f"UPDATE tariffs SET {field}=? WHERE id=?", (value, tariff_id))
         await db.commit()
+
 
 async def delete_tariff(tariff_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -394,6 +420,7 @@ async def get_setting(key: str):
         async with db.execute("SELECT value FROM settings WHERE key=?", (key,)) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
+
 
 async def set_setting(key: str, value: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -416,6 +443,7 @@ async def create_premium_request(user_id: int, tariff_id: int, screenshot_file_i
         await db.commit()
         return cur.lastrowid
 
+
 async def get_premium_request(request_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -428,6 +456,7 @@ async def get_premium_request(request_id: int):
             (request_id,)
         ) as cur:
             return await cur.fetchone()
+
 
 async def get_pending_premium_requests():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -442,6 +471,7 @@ async def get_pending_premium_requests():
         ) as cur:
             return await cur.fetchall()
 
+
 async def get_user_premium_requests(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -454,6 +484,7 @@ async def get_user_premium_requests(user_id: int):
             (user_id,)
         ) as cur:
             return await cur.fetchall()
+
 
 async def update_premium_request_status(request_id: int, status: str, reviewed_by: int | None = None):
     async with aiosqlite.connect(DB_PATH) as db:
