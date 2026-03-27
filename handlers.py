@@ -1,6 +1,6 @@
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.error import TelegramError
+from telegram.error import TelegramError, BadRequest
 
 from database import (
     add_user, is_admin, get_setting, get_channels, get_movie, increment_views,
@@ -20,12 +20,56 @@ import movie_handlers as mv_h
 import channel_handlers as ch_h
 import tariff_handlers as tr_h
 import broadcast_handlers as bc_h
-from config import PROTECT_CONTENT_DEFAULT, PAYMENT_CARD, PAYMENT_OWNER, SUPPORT_USERNAME, BOT_NAME
+from config import PROTECT_CONTENT_DEFAULT, PAYMENT_CARD, PAYMENT_OWNER, SUPPORT_USERNAME
 
 MENU_TEXTS = {
     "📊 Statistika", "📨 Xabar yuborish", "🎬 Kinolar", "🔐 Kanallar", "👮 Adminlar", "⚙️ Sozlamalar",
     "⭐ Premium", "👤 Kabinet", "ℹ️ Yordam", "🎬 Kino kodini yuborish", "❌ Bekor qilish"
 }
+
+
+async def safe_edit_text(query, text, reply_markup=None, parse_mode="HTML"):
+    try:
+        kwargs = {"text": text, "reply_markup": reply_markup}
+        if parse_mode is not None:
+            kwargs["parse_mode"] = parse_mode
+        await query.edit_message_text(**kwargs)
+    except BadRequest as e:
+        err = str(e)
+
+        if "Message is not modified" in err:
+            return
+
+        if "message to edit not found" in err.lower():
+            kwargs = {"text": text, "reply_markup": reply_markup}
+            if parse_mode is not None:
+                kwargs["parse_mode"] = parse_mode
+            await query.message.reply_text(**kwargs)
+            return
+
+        raise
+
+
+async def safe_edit_caption(query, caption, reply_markup=None, parse_mode="HTML"):
+    try:
+        kwargs = {"caption": caption, "reply_markup": reply_markup}
+        if parse_mode is not None:
+            kwargs["parse_mode"] = parse_mode
+        await query.edit_message_caption(**kwargs)
+    except BadRequest as e:
+        err = str(e)
+
+        if "Message is not modified" in err:
+            return
+
+        if "message to edit not found" in err.lower():
+            kwargs = {"text": caption, "reply_markup": reply_markup}
+            if parse_mode is not None:
+                kwargs["parse_mode"] = parse_mode
+            await query.message.reply_text(**kwargs)
+            return
+
+        raise
 
 
 async def admin_check(user_id: int) -> bool:
@@ -62,8 +106,9 @@ async def ensure_subscription_prompt(update: Update, context: ContextTypes.DEFAU
 
     kb = subscribe_keyboard(not_sub)
     text = "⚠️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:"
+
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=kb)
+        await safe_edit_text(update.callback_query, text, reply_markup=kb, parse_mode=None)
     elif update.message:
         await update.message.reply_text(text, reply_markup=kb)
     return False
@@ -101,7 +146,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args
     if args:
-        code = args[0].strip()
+        code = args[0].strip().lower()
         if not await ensure_subscription_prompt(update, context):
             return
         await send_movie(update, context, code)
@@ -126,12 +171,17 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, code: s
 
     movie = await get_movie(code)
     if not movie:
-        await update.message.reply_text("❌ Bunday kodli kino topilmadi!")
+        if update.message:
+            await update.message.reply_text("❌ Bunday kodli kino topilmadi!")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("❌ Bunday kodli kino topilmadi!")
         return
 
     await increment_views(code)
 
     try:
+        target_message = update.message or update.callback_query.message
+
         if movie['source_chat_id'] and movie['source_message_id']:
             protect = (await get_setting('sharing_enabled')) == '0' or PROTECT_CONTENT_DEFAULT
             await context.bot.copy_message(
@@ -144,18 +194,36 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, code: s
 
         caption = movie['caption'] or movie['title']
         ftype = movie['file_type']
+
         if ftype == 'video':
-            await update.message.reply_video(movie['file_id'], caption=caption, protect_content=PROTECT_CONTENT_DEFAULT)
+            await target_message.reply_video(
+                movie['file_id'],
+                caption=caption,
+                protect_content=PROTECT_CONTENT_DEFAULT
+            )
         elif ftype == 'document':
-            await update.message.reply_document(movie['file_id'], caption=caption, protect_content=PROTECT_CONTENT_DEFAULT)
+            await target_message.reply_document(
+                movie['file_id'],
+                caption=caption,
+                protect_content=PROTECT_CONTENT_DEFAULT
+            )
         elif ftype == 'photo':
-            await update.message.reply_photo(movie['file_id'], caption=caption, protect_content=PROTECT_CONTENT_DEFAULT)
+            await target_message.reply_photo(
+                movie['file_id'],
+                caption=caption,
+                protect_content=PROTECT_CONTENT_DEFAULT
+            )
         elif ftype == 'animation':
-            await update.message.reply_animation(movie['file_id'], caption=caption, protect_content=PROTECT_CONTENT_DEFAULT)
+            await target_message.reply_animation(
+                movie['file_id'],
+                caption=caption,
+                protect_content=PROTECT_CONTENT_DEFAULT
+            )
         else:
-            await update.message.reply_text("❌ Kino fayli topilmadi.")
+            await target_message.reply_text("❌ Kino fayli topilmadi.")
     except TelegramError as e:
-        await update.message.reply_text(f"❌ Xatolik: {e}")
+        target_message = update.message or update.callback_query.message
+        await target_message.reply_text(f"❌ Xatolik: {e}")
 
 
 async def show_user_premium_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,8 +236,13 @@ async def show_user_premium_menu(update: Update, context: ContextTypes.DEFAULT_T
             "Premium orqali reklamasiz va qulay foydalanish imkonlari ochiladi.\n"
             "Quyidagi tugmalardan birini tanlang."
         )
-    target = update.callback_query.edit_message_text if update.callback_query else update.message.reply_text
-    await target(text, parse_mode="HTML", reply_markup=user_premium_keyboard())
+
+    markup = user_premium_keyboard()
+
+    if update.callback_query:
+        await safe_edit_text(update.callback_query, text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
 
 
 async def show_user_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -182,7 +255,7 @@ async def show_user_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = tariff_list_keyboard(tariffs, admin_mode=False)
 
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+        await safe_edit_text(update.callback_query, text, reply_markup=markup, parse_mode="HTML")
     else:
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
 
@@ -190,21 +263,27 @@ async def show_user_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_user_tariff_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, tariff_id: int):
     tariff = await get_tariff(tariff_id)
     if not tariff or not tariff['is_active']:
-        await update.callback_query.edit_message_text("❌ Tarif topilmadi.", reply_markup=back_keyboard("user_premium"))
+        await safe_edit_text(update.callback_query, "❌ Tarif topilmadi.", reply_markup=back_keyboard("user_premium"), parse_mode=None)
         return
+
     text = (
         f"📦 <b>{tariff['name']}</b>\n\n"
         f"📅 Muddat: <b>{tariff['duration_days']} kun</b>\n"
         f"💰 Narx: <b>{tariff['price']:,} so'm</b>\n\n"
         f"Sotib olish tugmasini bossangiz, to'lov ko'rsatmasi chiqadi."
     )
-    await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=user_tariff_keyboard(tariff_id))
+    await safe_edit_text(
+        update.callback_query,
+        text,
+        reply_markup=user_tariff_keyboard(tariff_id),
+        parse_mode="HTML"
+    )
 
 
 async def start_buy_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE, tariff_id: int):
     tariff = await get_tariff(tariff_id)
     if not tariff or not tariff['is_active']:
-        await update.callback_query.edit_message_text("❌ Tarif topilmadi.", reply_markup=back_keyboard("user_premium"))
+        await safe_edit_text(update.callback_query, "❌ Tarif topilmadi.", reply_markup=back_keyboard("user_premium"), parse_mode=None)
         return
 
     payment_card = (await get_setting('payment_card')) or PAYMENT_CARD
@@ -233,7 +312,13 @@ async def start_buy_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         "📸 Endi shu chatga to'lov screenshotini yuboring.",
         "❌ Bekor qilish tugmasi orqali jarayonni to'xtatishingiz mumkin.",
     ])
-    await update.callback_query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=back_keyboard("user_premium"))
+
+    await safe_edit_text(
+        update.callback_query,
+        "\n".join(lines),
+        reply_markup=back_keyboard("user_premium"),
+        parse_mode="HTML"
+    )
 
 
 async def handle_premium_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -243,7 +328,10 @@ async def handle_premium_screenshot(update: Update, context: ContextTypes.DEFAUL
     tariff = await get_tariff(tariff_id) if tariff_id else None
     if not tariff:
         clear_state(user.id)
-        await update.message.reply_text("❌ Tarif topilmadi. Qaytadan urinib ko'ring.", reply_markup=main_user_keyboard())
+        await update.message.reply_text(
+            "❌ Tarif topilmadi. Qaytadan urinib ko'ring.",
+            reply_markup=main_user_keyboard()
+        )
         return
 
     screenshot_file_id = None
@@ -270,19 +358,30 @@ async def handle_premium_screenshot(update: Update, context: ContextTypes.DEFAUL
     )
 
     admins = [a['user_id'] for a in await get_admins()]
-    if user.id != 0:
-        from config import SUPER_ADMIN_ID
+    from config import SUPER_ADMIN_ID
+    if SUPER_ADMIN_ID:
         admins.append(SUPER_ADMIN_ID)
     admins = list(dict.fromkeys(admins))
 
     for admin_id in admins:
         try:
-            if screenshot_file_id:
-                await context.bot.send_photo(admin_id, screenshot_file_id, caption=text, parse_mode="HTML", reply_markup=premium_request_admin_keyboard(request_id))
-            else:
-                await context.bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=premium_request_admin_keyboard(request_id))
+            await context.bot.send_photo(
+                admin_id,
+                screenshot_file_id,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=premium_request_admin_keyboard(request_id)
+            )
         except Exception:
-            pass
+            try:
+                await context.bot.send_message(
+                    admin_id,
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=premium_request_admin_keyboard(request_id)
+                )
+            except Exception:
+                pass
 
     await update.message.reply_text(
         "✅ So'rovingiz yuborildi. Admin tasdiqlagach premium avtomatik beriladi.",
@@ -300,18 +399,36 @@ async def show_user_requests(update: Update, context: ContextTypes.DEFAULT_TYPE)
             status_map = {'pending': '⏳ Kutilmoqda', 'approved': '✅ Tasdiqlangan', 'rejected': '❌ Bekor qilingan'}
             lines.append(f"\n• {r['tariff_name']} — {status_map.get(r['status'], r['status'])}")
         text = "\n".join(lines)
-    await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=back_keyboard("user_premium"))
+
+    await safe_edit_text(
+        update.callback_query,
+        text,
+        reply_markup=back_keyboard("user_premium"),
+        parse_mode="HTML"
+    )
 
 
 async def show_pending_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reqs = await get_pending_premium_requests()
     if not reqs:
-        await update.callback_query.edit_message_text("🧾 Kutilayotgan premium so'rovlar yo'q.", reply_markup=back_keyboard("premium_settings"))
+        await safe_edit_text(
+            update.callback_query,
+            "🧾 Kutilayotgan premium so'rovlar yo'q.",
+            reply_markup=back_keyboard("premium_settings"),
+            parse_mode=None
+        )
         return
+
     lines = ["🧾 <b>Kutilayotgan so'rovlar</b>"]
     for r in reqs[:20]:
         lines.append(f"\n• #{r['id']} — {r['full_name'] or r['user_id']} — {r['tariff_name']}")
-    await update.callback_query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=back_keyboard("premium_settings"))
+
+    await safe_edit_text(
+        update.callback_query,
+        "\n".join(lines),
+        reply_markup=back_keyboard("premium_settings"),
+        parse_mode="HTML"
+    )
 
 
 async def approve_premium_request(update: Update, context: ContextTypes.DEFAULT_TYPE, request_id: int):
@@ -319,13 +436,24 @@ async def approve_premium_request(update: Update, context: ContextTypes.DEFAULT_
     if not req or req['status'] != 'pending':
         await update.callback_query.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
         return
+
     await set_premium(req['user_id'], req['duration_days'])
     await update_premium_request_status(request_id, 'approved', update.effective_user.id)
+
     try:
-        await context.bot.send_message(req['user_id'], f"🎉 Premium so'rovingiz tasdiqlandi!\n\n📦 {req['tariff_name']}\n📅 {req['duration_days']} kun")
+        await context.bot.send_message(
+            req['user_id'],
+            f"🎉 Premium so'rovingiz tasdiqlandi!\n\n📦 {req['tariff_name']}\n📅 {req['duration_days']} kun"
+        )
     except Exception:
         pass
-    await update.callback_query.edit_message_caption(caption=(update.callback_query.message.caption or '') + "\n\n✅ Tasdiqlandi", parse_mode="HTML") if update.callback_query.message.photo else await update.callback_query.edit_message_text("✅ So'rov tasdiqlandi.")
+
+    if update.callback_query.message.photo:
+        old_caption = update.callback_query.message.caption or ""
+        new_caption = old_caption + "\n\n✅ Tasdiqlandi"
+        await safe_edit_caption(update.callback_query, new_caption, parse_mode="HTML")
+    else:
+        await safe_edit_text(update.callback_query, "✅ So'rov tasdiqlandi.", parse_mode=None)
 
 
 async def reject_premium_request(update: Update, context: ContextTypes.DEFAULT_TYPE, request_id: int):
@@ -333,12 +461,23 @@ async def reject_premium_request(update: Update, context: ContextTypes.DEFAULT_T
     if not req or req['status'] != 'pending':
         await update.callback_query.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
         return
+
     await update_premium_request_status(request_id, 'rejected', update.effective_user.id)
+
     try:
-        await context.bot.send_message(req['user_id'], f"❌ Premium so'rovingiz bekor qilindi.\n\nSabab uchun admin bilan bog'laning.")
+        await context.bot.send_message(
+            req['user_id'],
+            "❌ Premium so'rovingiz bekor qilindi.\n\nSabab uchun admin bilan bog'laning."
+        )
     except Exception:
         pass
-    await update.callback_query.edit_message_caption(caption=(update.callback_query.message.caption or '') + "\n\n❌ Bekor qilindi", parse_mode="HTML") if update.callback_query.message.photo else await update.callback_query.edit_message_text("❌ So'rov bekor qilindi.")
+
+    if update.callback_query.message.photo:
+        old_caption = update.callback_query.message.caption or ""
+        new_caption = old_caption + "\n\n❌ Bekor qilindi"
+        await safe_edit_caption(update.callback_query, new_caption, parse_mode="HTML")
+    else:
+        await safe_edit_text(update.callback_query, "❌ So'rov bekor qilindi.", parse_mode=None)
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -466,7 +605,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "check_sub":
         ok = await ensure_subscription_prompt(update, context)
         if ok:
-            await query.edit_message_text("✅ Rahmat! Endi kino kodini yuboring.")
+            await safe_edit_text(query, "✅ Rahmat! Endi kino kodini yuboring.", parse_mode=None)
         return
 
     # User callbacks
@@ -566,15 +705,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         payment_card = (await get_setting('payment_card')) or PAYMENT_CARD or "Kiritilmagan"
         payment_owner = (await get_setting('payment_owner')) or PAYMENT_OWNER or "Kiritilmagan"
         note = (await get_setting('payment_note')) or "To'lovdan keyin screenshot yuboriladi va admin tasdiqlaydi."
-        await query.edit_message_text(
+        await safe_edit_text(
+            query,
             f"💳 <b>Oddiy to'lov tizimi</b>\n\n💳 Karta: <code>{payment_card}</code>\n👤 Egasi: <b>{payment_owner}</b>\n\n{note}",
             parse_mode="HTML",
             reply_markup=back_keyboard("payment_settings")
         )
     elif data == "auto_payment":
-        await query.edit_message_text(
+        await safe_edit_text(
+            query,
             "⚡ Avtomatik to'lov hozircha yo'q. Manual premium oqimi tayyor.",
-            reply_markup=back_keyboard("payment_settings")
+            reply_markup=back_keyboard("payment_settings"),
+            parse_mode=None
         )
     elif data == "premium_settings":
         await adm.premium_settings_menu(update, context)
@@ -602,3 +744,5 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await tr_h.show_tariff_detail(update, context, int(data.replace("tariff_", "")))
     elif data == "give_premium":
         await adm.start_give_premium(update, context)
+    else:
+        await query.answer("Noma'lum amal", show_alert=False)
