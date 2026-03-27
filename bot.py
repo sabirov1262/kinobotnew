@@ -1,5 +1,6 @@
 import logging
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -26,7 +27,13 @@ async def post_init(app: Application) -> None:
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.exception("❌ Xatolik yuz berdi:", exc_info=context.error)
+    err = context.error
+
+    if isinstance(err, BadRequest) and "Message is not modified" in str(err):
+        logger.warning("ℹ️ Message is not modified xatosi ushlab qolindi.")
+        return
+
+    logger.exception("❌ Xatolik yuz berdi:", exc_info=err)
 
     if isinstance(update, Update) and update.effective_message:
         try:
