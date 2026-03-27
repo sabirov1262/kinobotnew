@@ -98,8 +98,10 @@ async def handle_movie_source_message_id(update: Update, context: ContextTypes.D
 
     if not MOVIES_CHANNEL_ID:
         await update.message.reply_text(
-            "❌ MOVIES_CHANNEL_ID sozlanmagan. Render environment ga baza kanal ID sini kiriting.\n"
-            "Masalan: -1001234567890"
+            "❌ MOVIES_CHANNEL_ID sozlanmagan.\n"
+            "Render environment ga kanal ID kiriting.\n"
+            "Masalan: <code>-1001234567890</code>",
+            parse_mode="HTML",
         )
         return
 
@@ -108,7 +110,8 @@ async def handle_movie_source_message_id(update: Update, context: ContextTypes.D
         source_message_id = int(raw_value)
     except ValueError:
         await update.message.reply_text(
-            "❌ Message ID raqam bo'lishi kerak.\nMasalan: <code>123</code>",
+            "❌ Message ID raqam bo'lishi kerak.\n"
+            "Masalan: <code>123</code>",
             parse_mode="HTML",
         )
         return
@@ -119,46 +122,43 @@ async def handle_movie_source_message_id(update: Update, context: ContextTypes.D
             from_chat_id=MOVIES_CHANNEL_ID,
             message_id=source_message_id,
         )
+
+        # Tekshiruv uchun nusxa olingan xabarni o‘chirib tashlaymiz
         try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=probe.message_id)
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=probe.message_id,
+            )
         except Exception:
             pass
+
     except TelegramError as e:
         await update.message.reply_text(
             "❌ Kanal postini olib bo'lmadi.\n"
-            "Bot kanalga admin qilinganini va message ID to'g'ri ekanini tekshiring.\n\n"
+            "Quyidagilarni tekshiring:\n"
+            "1) bot kanalga admin qilinganmi\n"
+            "2) message ID to'g'rimi\n"
+            "3) kanal ID to'g'rimi\n\n"
             f"Xatolik: {e}"
         )
         return
 
-    file_type = "message"
-    if probe.video:
-        file_type = "video"
-    elif probe.document:
-        file_type = "document"
-    elif probe.photo:
-        file_type = "photo"
-    elif probe.animation:
-        file_type = "animation"
-
-    caption = probe.caption or code
-    title = f"Kino {code}"
-
     await add_movie(
         code=code,
-        title=title,
+        title=f"Kino {code}",
         file_id=None,
-        file_type=file_type,
-        caption=caption,
+        file_type="message",
+        caption=code,
         source_chat_id=str(MOVIES_CHANNEL_ID),
         source_message_id=source_message_id,
     )
+
     clear_state(user_id)
 
     await update.message.reply_text(
-        f"✅ <b>Kino muvaffaqiyatli saqlandi!</b>\n\n"
+        "✅ <b>Kino muvaffaqiyatli saqlandi!</b>\n\n"
         f"🔑 Kod: <code>{code}</code>\n"
-        f"📁 Tur: {file_type}\n"
+        f"📁 Tur: message\n"
         f"🗂 Kanal message ID: <code>{source_message_id}</code>",
         parse_mode="HTML",
         reply_markup=main_admin_keyboard(),
@@ -186,7 +186,8 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     movie = await get_movie(code)
     if not movie:
         await update.callback_query.edit_message_text(
-            "❌ Kino topilmadi!", reply_markup=back_keyboard("movie_list")
+            "❌ Kino topilmadi!",
+            reply_markup=back_keyboard("movie_list"),
         )
         return
 
@@ -194,14 +195,19 @@ async def show_movie_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         f"🎬 <b>{movie['title']}</b>\n\n"
         f"🔑 Kod: <code>{movie['code']}</code>\n"
         f"📁 Tur: {movie['file_type']}\n"
-        f"👁 Ko'rishlar: {movie['views']}\n"
-        f"📝 Caption: {movie['caption'] or 'Yo\'q'}\n"
-        f"🗂 Kanal ID: <code>{movie['source_chat_id'] or '-'}</code>\n"
-        f"🧾 Message ID: <code>{movie['source_message_id'] or '-'}</code>\n"
-        f"📅 Qo'shilgan: {movie['added_at'][:10]}"
+        f"👁 Ko'rishlar: {movie['views']}"
     )
+
+    if movie.get("source_message_id"):
+        text += f"\n🗂 Message ID: <code>{movie['source_message_id']}</code>"
+
+    if movie.get("caption"):
+        text += f"\n\n📝 {movie['caption']}"
+
     await update.callback_query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=movie_manage_keyboard(code)
+        text,
+        parse_mode="HTML",
+        reply_markup=movie_manage_keyboard(code),
     )
 
 
@@ -260,7 +266,8 @@ async def handle_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update_movie(code, field, value)
     clear_state(user_id)
     await update.message.reply_text(
-        "✅ O'zgartirildi!", reply_markup=main_admin_keyboard()
+        "✅ O'zgartirildi!",
+        reply_markup=main_admin_keyboard(),
     )
 
 
@@ -280,6 +287,7 @@ async def handle_delete_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not movie:
         await update.message.reply_text("❌ Kino topilmadi!")
         return
+
     clear_state(user_id)
     await update.message.reply_text(
         f"🗑 <b>{movie['title']}</b> ni o'chirishni tasdiqlaysizmi?",
@@ -293,6 +301,7 @@ async def confirm_delete_movie(update: Update, context: ContextTypes.DEFAULT_TYP
     if not movie:
         await update.callback_query.edit_message_text("❌ Kino topilmadi!")
         return
+
     await update.callback_query.edit_message_text(
         f"🗑 <b>{movie['title']}</b> ni o'chirishni tasdiqlaysizmi?",
         parse_mode="HTML",
