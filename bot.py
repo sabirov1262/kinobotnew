@@ -16,7 +16,7 @@ from database import init_db
 from handlers import start_handler, button_handler, message_handler
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
@@ -27,18 +27,8 @@ WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 
-async def post_init(app: Application) -> None:
-    await init_db()
-    logger.info("✅ Database tayyor!")
-
-
 def build_app() -> Application:
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .build()
-    )
+    app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
@@ -52,21 +42,35 @@ async def healthcheck(request: web.Request) -> web.Response:
 
 async def telegram_webhook(request: web.Request) -> web.Response:
     ptb_app: Application = request.app["ptb_app"]
-    data = await request.json()
-    update = Update.de_json(data, ptb_app.bot)
-    await ptb_app.update_queue.put(update)
-    return web.Response(text="OK")
+
+    try:
+        data = await request.json()
+        logger.info("📩 Update keldi: %s", data)
+
+        update = Update.de_json(data, ptb_app.bot)
+        await ptb_app.process_update(update)
+
+        return web.Response(text="OK")
+    except Exception as e:
+        logger.exception("❌ Webhook update ishlashda xato: %s", e)
+        return web.Response(text="ERROR", status=500)
 
 
 async def on_startup(app_web: web.Application) -> None:
     ptb_app: Application = app_web["ptb_app"]
 
+    logger.info("🚀 Startup boshlandi")
+    await init_db()
+    logger.info("✅ Database tayyor!")
+
     await ptb_app.initialize()
     await ptb_app.start()
+
+    await ptb_app.bot.delete_webhook(drop_pending_updates=True)
     await ptb_app.bot.set_webhook(WEBHOOK_URL)
 
     logger.info("✅ Webhook o‘rnatildi: %s", WEBHOOK_URL)
-    logger.info("✅ Server portda ishga tushadi: %s", PORT)
+    logger.info("✅ Server portda ishga tushdi: %s", PORT)
 
 
 async def on_shutdown(app_web: web.Application) -> None:
@@ -100,7 +104,7 @@ def main() -> None:
     app_web.on_startup.append(on_startup)
     app_web.on_shutdown.append(on_shutdown)
 
-    logger.info("🚀 Bot webhook orqali ishga tushmoqda...")
+    logger.info("🌐 Web server ishga tushmoqda...")
     web.run_app(app_web, host="0.0.0.0", port=PORT)
 
 
