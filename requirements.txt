@@ -1,4 +1,0 @@
-python-telegram-bot==22.5
-aiohttp==3.10.11
-aiosqlite==0.21.0
-asyncpg==0.30.0
