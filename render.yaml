@@ -1,0 +1,26 @@
+services:
+  - type: worker
+    name: kino-bot-worker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    plan: free
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: SUPER_ADMIN_ID
+        sync: false
+      - key: DB_PATH
+        value: /var/data/kinobot.db
+      - key: MOVIES_CHANNEL_ID
+        sync: false
+      - key: BOT_NAME
+        value: Kinolar
+      - key: SUPPORT_USERNAME
+        sync: false
+      - key: PAYMENT_CARD
+        sync: false
+      - key: PAYMENT_OWNER
+        sync: false
+      - key: PROTECT_CONTENT_DEFAULT
+        value: "0"
